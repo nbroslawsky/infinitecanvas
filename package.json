@@ -1,0 +1,49 @@
+{
+  "name": "infinite-canvas",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.10",
+    "@fontsource/inter": "^5.3.0",
+    "@neondatabase/serverless": "^1.2.0",
+    "@pdf-lib/fontkit": "^1.1.1",
+    "@vercel/blob": "^2.8.2",
+    "better-auth": "^1.7.10",
+    "drizzle-orm": "^0.45.4",
+    "fflate": "^0.8.3",
+    "heic2any": "^0.0.4",
+    "modern-screenshot": "^4.7.0",
+    "next": "^16.4.2",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-infinite-viewer": "^0.28.1",
+    "react-moveable": "^0.56.0",
+    "react-selecto": "^1.26.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "dotenv": "^18.0.8",
+    "drizzle-kit": "^0.31.11",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.2",
+    "postcss": "^8.5.30",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5"
+  }
+}
