@@ -10,6 +10,7 @@ export function proxy(request: NextRequest) {
     pathname.startsWith("/privacy") ||
     pathname.startsWith("/terms") ||
     pathname.startsWith("/_next") ||
+    pathname.startsWith("/images/") ||
     pathname === "/favicon.ico"
   ) {
     return NextResponse.next();

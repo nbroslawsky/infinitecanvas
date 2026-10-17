@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import InfiniteViewer from "react-infinite-viewer";
 import Moveable from "react-moveable";
 import Selecto from "react-selecto";
 import { alignItems, contentBounds, distributeItems, dotGridStep, reparent, type AlignKind } from "@/lib/layout";
 import { FONT_SIZES, FRAME_COLORS, TEXT_COLORS, frameFill, type BoardPayload, type CanvasItem } from "@/lib/types";
+import { BusyOverlay, useBusyJob } from "@/components/BusyOverlay";
 import { downloadBlob, exportBoardPdf, exportBoardPng, exportBoardsZip } from "@/components/canvas/export-board";
 import { prepareImage, type PreparedImage } from "@/components/canvas/prepare-image";
 
@@ -36,6 +38,7 @@ export function InfiniteCanvas({
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [status, setStatus] = useState("Saved");
+  const job = useBusyJob();
   const [note, setNote] = useState("");
   const [zoomLabel, setZoomLabel] = useState(Math.round(initial.board.zoom * 100));
   const [view, setView] = useState({ scrollLeft: 0, scrollTop: 0, zoom: initial.board.zoom || 1 });
@@ -150,7 +153,7 @@ export function InfiniteCanvas({
           setStatus("Saved");
           continue;
         }
-        setStatus("Saving");
+        setStatus("Saving…");
         await persist(prev, next);
         lastSaved.current = next;
         setStatus("Saved");
@@ -173,26 +176,26 @@ export function InfiniteCanvas({
     if (immediate) {
       void flush();
     } else {
-      setStatus("Saving");
+      setStatus("Saving…");
       saveTimer.current = window.setTimeout(() => void flush(), 400);
     }
   }, [flush]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (status.startsWith("Saving") || status.startsWith("Couldn't") || status.startsWith("Sign in")) {
+      if (job.busy || status.startsWith("Saving") || status.startsWith("Couldn't") || status.startsWith("Sign in")) {
         event.preventDefault();
         event.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [status]);
+  }, [job.busy, status]);
 
   useEffect(() => {
     const onVisible = async () => {
       if (document.visibilityState !== "visible") return;
-      if (status.startsWith("Saving") || JSON.stringify(lastSaved.current) !== JSON.stringify(itemsRef.current)) return;
+      if (job.activeRef.current || status.startsWith("Saving") || JSON.stringify(lastSaved.current) !== JSON.stringify(itemsRef.current)) return;
       const response = await fetch(`/api/boards/${initial.board.id}`);
       if (!response.ok) return;
       const payload = (await response.json()) as BoardPayload;
@@ -203,7 +206,7 @@ export function InfiniteCanvas({
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [initial.board.id, status]);
+  }, [initial.board.id, job.activeRef, status]);
 
   const saveCamera = useCallback((x: number, y: number, zoom: number) => {
     setView({ scrollLeft: x, scrollTop: y, zoom });
@@ -257,53 +260,70 @@ export function InfiniteCanvas({
   }
 
   async function uploadFiles(files: File[], point?: { x: number; y: number }) {
+    if (files.length === 0) return;
+    const title = files.length === 1 ? "Adding image" : "Adding images";
+    if (!job.begin({ title, detail: "Preparing the file. Stay on this board." })) return;
     const origin = point ?? viewCenter();
     let offset = 0;
     const added: string[] = [];
-    for (const file of files) {
-      const prepared = await prepareImage(file);
-      if ("error" in prepared) {
-        setNote(prepared.error);
-        continue;
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        if (!file) continue;
+        job.update({
+          title,
+          detail: files.length === 1 ? `Preparing ${file.name}. Stay on this board.` : `${index + 1} of ${files.length} — ${file.name}. Stay on this board.`,
+        });
+        const prepared = await prepareImage(file);
+        if ("error" in prepared) {
+          setNote(prepared.error);
+          continue;
+        }
+        const asset = await sendAsset(prepared);
+        if (!asset) continue;
+        const size = fitted(prepared.width, prepared.height);
+        const item: CanvasItem = {
+          id: crypto.randomUUID(),
+          type: "image",
+          assetId: asset.id,
+          parentId: null,
+          x: origin.x + offset,
+          y: origin.y,
+          width: size.width,
+          height: size.height,
+          rotation: 0,
+          zIndex: maxZ(itemsRef.current) + 1,
+          text: "",
+          fontSize: 24,
+          color: "#1c1917",
+          name: "",
+        };
+        const next = applyReparent([...itemsRef.current, item], [item.id]);
+        commit(next, true);
+        added.push(item.id);
+        offset += size.width + 24;
       }
-      const asset = await sendAsset(prepared);
-      if (!asset) continue;
-      const size = fitted(prepared.width, prepared.height);
-      const item: CanvasItem = {
-        id: crypto.randomUUID(),
-        type: "image",
-        assetId: asset.id,
-        parentId: null,
-        x: origin.x + offset,
-        y: origin.y,
-        width: size.width,
-        height: size.height,
-        rotation: 0,
-        zIndex: maxZ(itemsRef.current) + 1,
-        text: "",
-        fontSize: 24,
-        color: "#1c1917",
-        name: "",
-      };
-      const next = applyReparent([...itemsRef.current, item], [item.id]);
-      commit(next, true);
-      added.push(item.id);
-      offset += size.width + 24;
+      if (added.length > 0) setSelectedIds(added);
+    } catch {
+      setNote("Could not save that image");
+    } finally {
+      job.end();
     }
-    if (added.length > 0) setSelectedIds(added);
   }
 
   async function sendAsset(prepared: PreparedImage) {
     if (uploadMode === "direct") {
       const { upload } = await import("@vercel/blob/client");
-      const originalBlob = await upload(prepared.name, prepared.original, {
-        access: "public",
-        handleUploadUrl: "/api/blob",
-      });
-      const previewBlob = await upload(`preview-${prepared.name}`, prepared.preview, {
-        access: "public",
-        handleUploadUrl: "/api/blob",
-      });
+      const [originalBlob, previewBlob] = await Promise.all([
+        upload(prepared.name, prepared.original, {
+          access: "public",
+          handleUploadUrl: "/api/blob",
+        }),
+        upload(`preview-${prepared.name}`, prepared.preview, {
+          access: "public",
+          handleUploadUrl: "/api/blob",
+        }),
+      ]);
       const response = await fetch("/api/assets", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -401,6 +421,10 @@ export function InfiniteCanvas({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (job.activeRef.current) {
+        if (event.code === "Space") event.preventDefault();
+        return;
+      }
       const target = event.target as HTMLElement;
       const typing = target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA";
       if (event.code === "Space" && !typing) {
@@ -454,6 +478,10 @@ export function InfiniteCanvas({
       event.clipboardData.setData(CANVAS_CLIPBOARD, payload);
     };
     const onPaste = (event: ClipboardEvent) => {
+      if (job.activeRef.current) {
+        event.preventDefault();
+        return;
+      }
       if (isTypingTarget(event.target) || !event.clipboardData) return;
       const ids = canvasIdsFromClipboard(event.clipboardData);
       if (ids) {
@@ -475,6 +503,10 @@ export function InfiniteCanvas({
       event.dataTransfer.dropEffect = "copy";
     };
     const onDrop = (event: DragEvent) => {
+      if (job.activeRef.current) {
+        event.preventDefault();
+        return;
+      }
       if (!pointInShell(event.clientX, event.clientY)) return;
       event.preventDefault();
       const files = [...(event.dataTransfer?.files ?? [])];
@@ -533,53 +565,67 @@ export function InfiniteCanvas({
 
   async function renameBoard(name: string) {
     setBoardName(name);
-    await fetch(`/api/boards/${initial.board.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
+    try {
+      const response = await fetch(`/api/boards/${initial.board.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+        keepalive: true,
+      });
+      if (!response.ok) setNote("Could not rename this board");
+    } catch {
+      setNote("Could not rename this board");
+    }
   }
 
   async function runExport(kind: "png" | "pdf" | "selection") {
+    const titles = { png: "Exporting PNG", pdf: "Exporting PDF", selection: "Exporting selection" } as const;
+    if (!job.begin({ title: titles[kind], detail: "Drawing the file. Stay on this board until it downloads." })) return;
     setNote("");
-    if (kind === "selection") {
-      const chosen = items.filter((item) => selectedIds.includes(item.id));
-      const result = await exportBoardPng(chosen);
+    try {
+      if (kind === "selection") {
+        const chosen = items.filter((item) => selectedIds.includes(item.id));
+        const result = await exportBoardPng(chosen);
+        if ("error" in result) {
+          setNote(result.error);
+          return;
+        }
+        downloadBlob(result.blob, `${safeName(boardName)}-selection.png`);
+        if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
+        return;
+      }
+      const pages = framePages(itemsRef.current, boardName);
+      if (kind === "pdf") {
+        const result = await exportBoardPdf(pages);
+        if ("error" in result) {
+          setNote(result.error);
+          return;
+        }
+        downloadBlob(result.blob, `${safeName(boardName)}.pdf`);
+        return;
+      }
+      if (pages.length === 1) {
+        const result = await exportBoardPng(pages[0].items);
+        if ("error" in result) {
+          setNote(result.error);
+          return;
+        }
+        downloadBlob(result.blob, `${safeName(pages[0].name)}.png`);
+        if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
+        return;
+      }
+      const result = await exportBoardsZip(pages);
       if ("error" in result) {
         setNote(result.error);
         return;
       }
-      downloadBlob(result.blob, `${safeName(boardName)}-selection.png`);
+      downloadBlob(result.blob, `${safeName(boardName)}.zip`);
       if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
-      return;
+    } catch {
+      setNote("Could not export that file");
+    } finally {
+      job.end();
     }
-    const pages = framePages(itemsRef.current, boardName);
-    if (kind === "pdf") {
-      const result = await exportBoardPdf(pages);
-      if ("error" in result) {
-        setNote(result.error);
-        return;
-      }
-      downloadBlob(result.blob, `${safeName(boardName)}.pdf`);
-      return;
-    }
-    if (pages.length === 1) {
-      const result = await exportBoardPng(pages[0].items);
-      if ("error" in result) {
-        setNote(result.error);
-        return;
-      }
-      downloadBlob(result.blob, `${safeName(pages[0].name)}.png`);
-      if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
-      return;
-    }
-    const result = await exportBoardsZip(pages);
-    if ("error" in result) {
-      setNote(result.error);
-      return;
-    }
-    downloadBlob(result.blob, `${safeName(boardName)}.zip`);
-    if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
   }
 
   function onItemPointerDown(event: React.PointerEvent<HTMLElement>, item: CanvasItem) {
@@ -624,9 +670,9 @@ export function InfiniteCanvas({
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] flex-col bg-zinc-100 text-zinc-900">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-zinc-200 bg-white px-3">
-        <a href="/" className="grid h-10 min-w-10 place-items-center rounded-lg px-2 text-sm text-zinc-700 hover:bg-zinc-100" title="Boards">
+        <Link href="/" className="grid h-10 min-w-10 place-items-center rounded-lg px-2 text-sm text-zinc-700 hover:bg-zinc-100" title="Boards">
           Boards
-        </a>
+        </Link>
         <input
           aria-label="Board name"
           className="h-10 min-w-0 flex-1 rounded-lg border border-transparent px-2 text-base font-medium outline-none hover:border-zinc-200 focus:border-blue-500"
@@ -639,10 +685,16 @@ export function InfiniteCanvas({
         <button className={iconButton} title="Zoom in" onClick={() => viewerRef.current?.setZoom(Math.min(8, (viewerRef.current?.getZoom() || 1) * 1.2))}>+</button>
         <button className={iconButton} title="Fit (⌘0)" onClick={fit}>Fit</button>
         <button className={iconButton} title="100% (⌘1)" onClick={() => viewerRef.current?.setZoom(1)}>100%</button>
-        <button className={iconButton} title="Download each frame as a PNG" data-testid="export-png" onClick={() => void runExport("png")}>PNG</button>
-        <button className={iconButton} title="Download each frame as a PDF page" data-testid="export-pdf" onClick={() => void runExport("pdf")}>PDF</button>
-        <button className={iconButton} title="Export selection" onClick={() => void runExport("selection")}>Selection</button>
-        <span className="min-w-16 text-right text-xs text-zinc-500" data-testid="save-status">{status}</span>
+        <button className={iconButton} title="Download each frame as a PNG" data-testid="export-png" disabled={Boolean(job.busy)} onClick={() => void runExport("png")}>PNG</button>
+        <button className={iconButton} title="Download each frame as a PDF page" data-testid="export-pdf" disabled={Boolean(job.busy)} onClick={() => void runExport("pdf")}>PDF</button>
+        <button className={iconButton} title="Export selection" disabled={Boolean(job.busy)} onClick={() => void runExport("selection")}>Selection</button>
+        <span
+          className={`inline-flex min-w-16 items-center justify-end gap-1.5 text-right text-xs ${status === "Saved" ? "text-zinc-500" : status.startsWith("Saving") ? "text-amber-700" : "text-red-700"}`}
+          data-testid="save-status"
+          title={status}
+        >
+          {status.startsWith("Saving") ? <span aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin rounded-full border border-amber-200 border-t-amber-700" /> : null}{status}
+        </span>
       </header>
       <div className="flex min-h-0 flex-1">
         <div className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-zinc-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
@@ -652,7 +704,7 @@ export function InfiniteCanvas({
           <button className={tool === "frame" ? toolOn : iconButton} aria-label="Frame" title="Frame" data-testid="frame-tool" onClick={() => setTool("frame")}>
             <FrameIcon />
           </button>
-          <label className={`${iconButton} cursor-pointer`} aria-label="Add image" title="Add image">
+          <label className={`${iconButton} cursor-pointer ${job.busy ? "pointer-events-none opacity-40" : ""}`} aria-label="Add image" title="Add image">
             <ImageIcon />
             <input
               data-testid="file-input"
@@ -660,6 +712,7 @@ export function InfiniteCanvas({
               type="file"
               accept="image/*,.heic,.heif"
               multiple
+              disabled={Boolean(job.busy)}
               onChange={(event) => {
                 const files = [...(event.target.files ?? [])];
                 event.target.value = "";
@@ -890,6 +943,7 @@ export function InfiniteCanvas({
           {note ? <p className="border-t border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600" data-testid="export-note">{note}</p> : null}
         </div>
       </div>
+      {job.busy ? <BusyOverlay title={job.busy.title} detail={job.busy.detail} /> : null}
     </div>
   );
 
@@ -1018,16 +1072,22 @@ function ItemNode({
       ) : null}
       {item.type === "image" && item.assetId ? (
         broken ? (
-          <div className="grid h-full w-full place-items-center bg-stone-200 text-xs text-stone-600">Image unavailable</div>
+          <div className="grid h-full w-full place-items-center bg-zinc-200 px-2 text-center text-xs text-zinc-600">Image unavailable</div>
         ) : (
-          <img
-            alt={item.name || ""}
-            draggable={false}
-            crossOrigin="anonymous"
-            className="h-full w-full object-fill"
-            src={`/api/assets/${item.assetId}?variant=preview`}
-            onError={() => setBroken(true)}
-          />
+          <>
+            <div className="image-pending pointer-events-none absolute inset-0 animate-pulse bg-zinc-300" aria-hidden="true" />
+            <img
+              alt={item.name || ""}
+              draggable={false}
+              crossOrigin="anonymous"
+              className="relative z-[1] h-full w-full object-fill"
+              src={`/api/assets/${item.assetId}?variant=preview`}
+              onLoad={(event) => {
+                event.currentTarget.dataset.ready = "true";
+              }}
+              onError={() => setBroken(true)}
+            />
+          </>
         )
       ) : null}
     </div>
@@ -1171,5 +1231,5 @@ function PanIcon() {
   );
 }
 
-const iconButton = "grid h-10 min-w-10 place-items-center rounded-lg px-2 text-sm text-zinc-600 hover:bg-zinc-100";
+const iconButton = "grid h-10 min-w-10 place-items-center rounded-lg px-2 text-sm text-zinc-600 hover:bg-zinc-100 disabled:opacity-40";
 const toolOn = "grid h-10 min-w-10 place-items-center rounded-lg bg-blue-600 px-2 text-sm text-white";

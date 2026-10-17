@@ -17,6 +17,10 @@ body {
   background: transparent !important;
 }
 
+[data-item-id]:has(img[data-ready="true"]) .image-pending {
+  display: none;
+}
+
 .moveable-line {
   background: #2563eb !important;
 }

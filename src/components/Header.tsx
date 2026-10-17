@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { Mark } from "@/components/Mark";
 import { SignOutButton } from "@/components/SignOutButton";
 
 export function Header({
@@ -13,14 +15,15 @@ export function Header({
 }) {
   return (
     <header className="flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-4">
-      <a href="/" className="text-sm font-semibold">
+      <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
+        <Mark className="h-7 w-7" />
         Infinite canvas
-      </a>
+      </Link>
       <div className="flex items-center gap-2">
         {admin ? (
-          <a href="/people" className="h-11 rounded-lg px-3 text-sm leading-[2.75rem] text-zinc-700 hover:bg-zinc-100">
+          <Link href="/people" className="h-11 rounded-lg px-3 text-sm leading-[2.75rem] text-zinc-700 hover:bg-zinc-100">
             People
-          </a>
+          </Link>
         ) : null}
         {image ? <img src={image} alt="" className="h-8 w-8 rounded-full" /> : null}
         <span className="max-w-40 truncate text-sm text-zinc-500">{name || email}</span>

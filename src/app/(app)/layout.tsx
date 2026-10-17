@@ -1,9 +1,11 @@
-import { redirect } from "next/navigation";
-import { getViewer } from "@/lib/session";
+import { NavigationHold } from "@/components/NavigationHold";
 
-export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const viewer = await getViewer();
-  if (!viewer) redirect("/sign-in");
-  if (!viewer.allowed) redirect("/api/leave");
-  return children;
+// Each page checks the session. Doing it here would leave the previous screen clickable until the database answers.
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <NavigationHold />
+      {children}
+    </>
+  );
 }

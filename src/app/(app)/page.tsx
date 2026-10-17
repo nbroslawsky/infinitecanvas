@@ -1,12 +1,10 @@
-import { redirect } from "next/navigation";
 import { BoardList } from "@/components/BoardList";
 import { Header } from "@/components/Header";
 import { listBoards } from "@/lib/items";
-import { getViewer } from "@/lib/session";
+import { requireViewer } from "@/lib/session";
 
 export default async function HomePage() {
-  const viewer = await getViewer();
-  if (!viewer?.allowed) redirect("/sign-in");
+  const viewer = await requireViewer();
   const boards = await listBoards(viewer.session.user.id);
   return (
     <>

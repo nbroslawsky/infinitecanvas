@@ -3,7 +3,8 @@ import path from "node:path";
 import { put } from "@vercel/blob";
 
 export function blobUploadsEnabled() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  if (process.env.BLOB_READ_WRITE_TOKEN) return true;
+  return Boolean(process.env.BLOB_STORE_ID && (process.env.VERCEL_OIDC_TOKEN || process.env.VERCEL));
 }
 
 export async function saveBytes(id: string, kind: "original" | "preview", bytes: Uint8Array, mime: string) {
@@ -14,6 +15,9 @@ export async function saveBytes(id: string, kind: "original" | "preview", bytes:
       addRandomSuffix: true,
     });
     return blob.url;
+  }
+  if (process.env.VERCEL) {
+    throw new Error("Image storage isn't configured. Connect a Vercel Blob store to this project.");
   }
   const dir = path.join(process.cwd(), ".data", "blobs", id);
   await mkdir(dir, { recursive: true });
