@@ -50,7 +50,10 @@ const devLogin = {
   },
 } satisfies BetterAuthPlugin;
 
-const globalAuth = globalThis as unknown as { canvasAuth?: ReturnType<typeof buildAuth> };
+const globalAuth = globalThis as unknown as {
+  canvasAuth?: ReturnType<typeof buildAuth>;
+  canvasAuthKey?: string;
+};
 
 async function buildAuth() {
   const db = await getDb();
@@ -96,6 +99,14 @@ async function buildAuth() {
 }
 
 export function getAuth() {
-  if (!globalAuth.canvasAuth) globalAuth.canvasAuth = buildAuth();
+  const key = [
+    process.env.GOOGLE_CLIENT_ID || "",
+    process.env.BETTER_AUTH_URL || "",
+    process.env.DATABASE_URL || "",
+  ].join("|");
+  if (!globalAuth.canvasAuth || globalAuth.canvasAuthKey !== key) {
+    globalAuth.canvasAuthKey = key;
+    globalAuth.canvasAuth = buildAuth();
+  }
   return globalAuth.canvasAuth;
 }
