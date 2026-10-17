@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { unzipSync } from "fflate";
 import { PDFDocument } from "pdf-lib";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -253,6 +254,35 @@ test.describe("desktop canvas", () => {
     const pdf = await PDFDocument.load(readFileSync(await download.path()));
     expect(pdf.getPageCount()).toBe(2);
   });
+});
+
+test("imports a figma file as draggable frames", async ({ page }) => {
+  await login(page);
+  await page.getByTestId("fig-input").setInputFiles(path.join(process.cwd(), "src/lib/figma/fixtures/sample.fig"));
+  await page.waitForURL(/\/boards\//);
+  const item = page.getByRole("img", { name: "Cappuccino" });
+  await expect(item).toBeVisible();
+  await expect(page.locator("[data-type='image']")).toHaveCount(31);
+  const before = Number(await item.locator("xpath=..").getAttribute("data-x"));
+  const box = await item.boundingBox();
+  expect(box).toBeTruthy();
+  const startX = box!.x + box!.width / 2;
+  const startY = box!.y + box!.height / 2;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 80, startY + 40, { steps: 10 });
+  await page.mouse.up();
+  await expect(page.getByTestId("save-status")).toHaveText("Saved");
+  await expect.poll(async () => Number(await item.locator("xpath=..").getAttribute("data-x"))).not.toBe(before);
+  await page.reload();
+  await expect(page.getByRole("img", { name: "Cappuccino" })).toBeVisible();
+
+  await page.goto("/");
+  await page.getByTestId("fig-input").setInputFiles(path.join(process.cwd(), "src/lib/figma/fixtures/banks.fig"));
+  await expect(page.getByText("Imported 3 boards")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Select banks — Cover" }).first()).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Select banks — Read Me" }).first()).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Select banks — Iran Banks" }).first()).toBeVisible();
 });
 
 test.describe("phone canvas", () => {

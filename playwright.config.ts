@@ -12,7 +12,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "DATA_DIR=.data/e2e-pglite ADMIN_EMAILS=admin@test.dev BETTER_AUTH_SECRET=test-secret-test-secret-test-secret npm run dev -- --port 3456",
+      "GOOGLE_CLIENT_ID= GOOGLE_CLIENT_SECRET= DATA_DIR=.data/e2e-pglite ADMIN_EMAILS=admin@test.dev BETTER_AUTH_SECRET=test-secret-test-secret-test-secret NEXT_DIST_DIR=.next-e2e npm run dev -- --port 3456",
     url: "http://localhost:3456/sign-in",
     reuseExistingServer: true,
     timeout: 120_000,

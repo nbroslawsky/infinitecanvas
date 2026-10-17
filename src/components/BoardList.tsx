@@ -8,12 +8,37 @@ export function BoardList({ initial }: { initial: BoardRecord[] }) {
   const [boards, setBoards] = useState(initial);
   const [selected, setSelected] = useState<string[]>([]);
   const [note, setNote] = useState("");
+  const [importing, setImporting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   async function refresh() {
     const response = await fetch("/api/boards");
     const body = (await response.json()) as { boards: BoardRecord[] };
     setBoards(body.boards);
+  }
+
+  async function importFig(file: File) {
+    setNote("");
+    setImporting(true);
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      const response = await fetch("/api/boards/import-fig", { method: "POST", body });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; boards?: Array<{ id: string }> };
+      if (!response.ok) {
+        setNote(payload.error || "Could not import that Figma file");
+        return;
+      }
+      const boards = payload.boards ?? [];
+      if (boards.length === 1 && boards[0]) {
+        window.location.href = `/boards/${boards[0].id}`;
+        return;
+      }
+      setNote(boards.length > 0 ? `Imported ${boards.length} boards` : "That Figma file has no pages to import");
+      await refresh();
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function createBoard() {
@@ -87,6 +112,21 @@ export function BoardList({ initial }: { initial: BoardRecord[] }) {
         <button className="h-11 rounded-md bg-stone-900 px-4 text-sm text-white" onClick={() => void createBoard()} data-testid="new-board">
           New board
         </button>
+        <label className={`h-11 rounded-md px-3 text-sm leading-[2.75rem] hover:bg-stone-200 ${importing ? "pointer-events-none opacity-40" : "cursor-pointer"}`}>
+          {importing ? "Importing…" : "Import Figma"}
+          <input
+            data-testid="fig-input"
+            className="sr-only"
+            type="file"
+            accept=".fig,.deck,.jam"
+            disabled={importing}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void importFig(file);
+            }}
+          />
+        </label>
         <button className="h-11 rounded-md px-3 text-sm hover:bg-stone-200 disabled:opacity-40" disabled={selected.length === 0} onClick={() => void exportPdf()} data-testid="export-boards-pdf">
           Export PDF
         </button>

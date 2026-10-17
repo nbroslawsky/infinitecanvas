@@ -992,7 +992,7 @@ function ItemNode({
           <div className="grid h-full w-full place-items-center bg-stone-200 text-xs text-stone-600">Image unavailable</div>
         ) : (
           <img
-            alt=""
+            alt={item.name || ""}
             draggable={false}
             crossOrigin="anonymous"
             className="h-full w-full object-fill"

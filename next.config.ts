@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["@electric-sql/pglite"],
+  distDir: process.env.NEXT_DIST_DIR || ".next",
+  serverExternalPackages: ["@electric-sql/pglite", "openfig-core", "fzstd"],
   experimental: {
-    proxyClientMaxBodySize: "30mb",
+    proxyClientMaxBodySize: "64mb",
   },
 };
 
