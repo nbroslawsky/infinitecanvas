@@ -5,7 +5,7 @@ import InfiniteViewer from "react-infinite-viewer";
 import Moveable from "react-moveable";
 import Selecto from "react-selecto";
 import { alignItems, contentBounds, distributeItems, dotGridStep, reparent, type AlignKind } from "@/lib/layout";
-import { FONT_SIZES, TEXT_COLORS, type BoardPayload, type CanvasItem } from "@/lib/types";
+import { FONT_SIZES, FRAME_COLORS, TEXT_COLORS, frameFill, type BoardPayload, type CanvasItem } from "@/lib/types";
 import { downloadBlob, exportBoardPdf, exportBoardPng, exportBoardsZip } from "@/components/canvas/export-board";
 import { prepareImage, type PreparedImage } from "@/components/canvas/prepare-image";
 
@@ -359,7 +359,7 @@ export function InfiniteCanvas({
       zIndex: maxZ(itemsRef.current) + 1,
       text: "",
       fontSize: 24,
-      color: "#1c1917",
+      color: "#ffffff",
       name: `Frame ${count}`,
     };
     const next = applyReparent([...itemsRef.current, item], [item.id]);
@@ -847,6 +847,32 @@ export function InfiniteCanvas({
               {single.type === "image" && single.assetId ? (
                 <a className={iconButton} title="Download original" href={`/api/assets/${single.assetId}?variant=original`} download>Original</a>
               ) : null}
+              {single.type === "frame" ? (
+                <>
+                  {FRAME_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      title={color === "transparent" ? "No fill" : color}
+                      data-testid={`frame-fill-${color}`}
+                      className="h-10 w-10 rounded-lg border border-zinc-200"
+                      style={{
+                        background:
+                          color === "transparent"
+                            ? "repeating-conic-gradient(#d6d3d1 0% 25%, #ffffff 0% 50%) 50% / 10px 10px"
+                            : color,
+                      }}
+                      onClick={() => updateSelected((item) => ({ ...item, color }))}
+                    />
+                  ))}
+                  <input
+                    aria-label="Frame color"
+                    className="h-10 w-10 cursor-pointer rounded-lg border border-zinc-200 bg-transparent"
+                    type="color"
+                    value={frameFill(single.color).startsWith("#") ? frameFill(single.color).slice(0, 7) : "#ffffff"}
+                    onChange={(event) => updateSelected((item) => ({ ...item, color: event.target.value }))}
+                  />
+                </>
+              ) : null}
               {single.type === "text" ? (
                 <>
                   {FONT_SIZES.map((size) => (
@@ -949,7 +975,10 @@ function ItemNode({
           ) : (
             <div className="absolute -top-6 left-0 truncate text-sm font-semibold text-zinc-500">{item.name || "Frame"}</div>
           )}
-          <div className={`h-full w-full overflow-hidden bg-white shadow-sm ${selected ? "border-2 border-blue-600" : "border border-zinc-200"}`}>
+          <div
+            className={`h-full w-full overflow-hidden shadow-sm ${selected ? "border-2 border-blue-600" : "border border-zinc-200"}`}
+            style={{ background: frameFill(item.color) }}
+          >
             {children.map((child) => (
               <ItemNode
                 key={child.id}

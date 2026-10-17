@@ -17,13 +17,12 @@ export function pagesFromFig(bytes: Uint8Array, filename: string) {
   const sheets = slides.length > 0 ? slides : canvases(doc);
   const pages: FigImportPage[] = [];
   for (const sheet of sheets) {
-    const objects = objectsOn(doc, sheet);
+    const objects = layoutObjects(objectsOn(doc, sheet));
     if (objects.length === 0) continue;
-    const centered = center(objects);
     pages.push({
       name: boardName(fileName, sheet.name || "Page", sheets.length),
-      zoom: fitZoom(centered),
-      objects: centered,
+      zoom: fitZoom(objects.filter((object) => !object.parentKey)),
+      objects,
     });
   }
   if (pages.length === 0) throw new Error("That Figma file has no pages to import");
@@ -52,22 +51,76 @@ function objectsOn(doc: FigDocument, sheet: FigNode) {
   const objects: RenderedNode[] = [];
   for (const child of ordered(children)) {
     if (child.type === "CANVAS" || child.type === "DOCUMENT" || child.visible === false || child.phase === "REMOVED") continue;
-    flatten(doc, child, IDENTITY, objects);
+    flatten(doc, child, IDENTITY, null, objects);
   }
   return objects;
 }
 
-function flatten(doc: FigDocument, node: FigNode, parentWorld: FigTransform, objects: RenderedNode[]) {
+function flatten(doc: FigDocument, node: FigNode, parentWorld: FigTransform, parentKey: string | null, objects: RenderedNode[]) {
   if (node.visible === false || node.phase === "REMOVED" || node.mask) return;
   const world = multiply(parentWorld, node.transform ?? IDENTITY);
+  const key = nodeId(node) || crypto.randomUUID();
   if (shouldExplode(doc, node)) {
+    if (node.type === "FRAME" || node.type === "SECTION") {
+      const box = frameBox(node, world);
+      if (box) {
+        objects.push({
+          key,
+          parentKey,
+          type: "frame",
+          name: (node.name || "Frame").slice(0, 120),
+          ...box,
+          svg: "",
+          color: frameColor(node),
+        });
+        const stroke = renderTopLevel(doc, node, { transform: world, shallow: true, strokesOnly: true });
+        if (stroke?.svg) objects.push({ ...stroke, key: `${key}:stroke`, parentKey: key, name: node.name || "Stroke" });
+        for (const child of ordered(doc.childrenMap.get(key) || [])) flatten(doc, child, world, key, objects);
+        return;
+      }
+    }
     const background = renderTopLevel(doc, node, { transform: world, shallow: true });
-    if (background) objects.push(background);
-    for (const child of ordered(doc.childrenMap.get(nodeId(node) || "") || [])) flatten(doc, child, world, objects);
+    if (background) objects.push({ ...background, key, parentKey });
+    for (const child of ordered(doc.childrenMap.get(key) || [])) flatten(doc, child, world, parentKey, objects);
     return;
   }
   const rendered = renderTopLevel(doc, node, { transform: world });
-  if (rendered) objects.push(rendered);
+  if (rendered) objects.push({ ...rendered, key, parentKey });
+}
+
+function frameBox(node: FigNode, world: FigTransform) {
+  const width = node.size?.x || 0;
+  const height = node.size?.y || 0;
+  if (width < 1 || height < 1) return null;
+  const round = (value: number) => Math.round(value * 1000) / 1000;
+  const pure =
+    Math.abs(world.m00 - 1) < 1e-3 && Math.abs(world.m11 - 1) < 1e-3 && Math.abs(world.m01) < 1e-3 && Math.abs(world.m10) < 1e-3;
+  if (pure) return { x: round(world.m02), y: round(world.m12), width: round(width), height: round(height) };
+  const corners = [
+    [0, 0],
+    [width, 0],
+    [width, height],
+    [0, height],
+  ].map(([x, y]) => ({
+    x: world.m00 * x + world.m01 * y + world.m02,
+    y: world.m10 * x + world.m11 * y + world.m12,
+  }));
+  const minX = Math.min(...corners.map((point) => point.x));
+  const minY = Math.min(...corners.map((point) => point.y));
+  const maxX = Math.max(...corners.map((point) => point.x));
+  const maxY = Math.max(...corners.map((point) => point.y));
+  return { x: round(minX), y: round(minY), width: round(maxX - minX), height: round(maxY - minY) };
+}
+
+function frameColor(node: FigNode) {
+  const paints = [...(node.backgroundPaints || []), ...(node.fillPaints || [])];
+  const solid = paints.find((paint) => paint && paint.visible !== false && paint.type === "SOLID" && paint.color);
+  if (!solid?.color) return "transparent";
+  const opacity = Math.max(0, Math.min(1, (solid.color.a ?? 1) * (solid.opacity ?? 1)));
+  const channel = (value: number) => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, "0");
+  const hex = `#${channel(solid.color.r)}${channel(solid.color.g)}${channel(solid.color.b)}`;
+  if (opacity >= 0.999) return hex;
+  return `${hex}${channel(opacity)}`;
 }
 
 function shouldExplode(doc: FigDocument, node: FigNode) {
@@ -119,7 +172,8 @@ function ordered(nodes: FigNode[]) {
   });
 }
 
-function center(objects: RenderedNode[]) {
+function layoutObjects(objects: RenderedNode[]) {
+  if (objects.length === 0) return objects;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -132,11 +186,15 @@ function center(objects: RenderedNode[]) {
   }
   const dx = (minX + maxX) / 2;
   const dy = (minY + maxY) / 2;
-  return objects.map((object) => ({
-    ...object,
-    x: Math.round((object.x - dx) * 1000) / 1000,
-    y: Math.round((object.y - dy) * 1000) / 1000,
-  }));
+  const round = (value: number) => Math.round(value * 1000) / 1000;
+  const shifted = objects.map((object) => ({ ...object, x: round(object.x - dx), y: round(object.y - dy) }));
+  const byKey = new Map(shifted.map((object) => [object.key, object]));
+  return shifted.map((object) => {
+    if (!object.parentKey) return object;
+    const parent = byKey.get(object.parentKey);
+    if (!parent || parent.type !== "frame") return { ...object, parentKey: null };
+    return { ...object, x: round(object.x - parent.x), y: round(object.y - parent.y) };
+  });
 }
 
 function fitZoom(objects: RenderedNode[]) {

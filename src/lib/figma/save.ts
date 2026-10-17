@@ -20,29 +20,35 @@ export async function importFigFile(userId: string, bytes: Uint8Array, filename:
       createdAt: now,
       updatedAt: now,
     });
+    const ids = new Map(page.objects.map((object) => [object.key, crypto.randomUUID()]));
     const assetRows = [];
     const itemRows = [];
     for (const [index, object] of page.objects.entries()) {
-      const assetId = crypto.randomUUID();
-      const svg = new TextEncoder().encode(object.svg);
-      const originalUrl = await saveBytes(assetId, "original", svg, "image/svg+xml");
-      const previewUrl = await saveBytes(assetId, "preview", svg, "image/svg+xml");
-      assetRows.push({
-        id: assetId,
-        userId,
-        originalUrl,
-        previewUrl,
-        mime: "image/svg+xml",
-        width: Math.max(1, Math.round(object.width)),
-        height: Math.max(1, Math.round(object.height)),
-        createdAt: now,
-      });
+      const itemId = ids.get(object.key) ?? crypto.randomUUID();
+      const parentId = object.parentKey ? (ids.get(object.parentKey) ?? null) : null;
+      let assetId: string | null = null;
+      if (object.type === "image" && object.svg) {
+        assetId = crypto.randomUUID();
+        const svg = new TextEncoder().encode(object.svg);
+        const originalUrl = await saveBytes(assetId, "original", svg, "image/svg+xml");
+        const previewUrl = await saveBytes(assetId, "preview", svg, "image/svg+xml");
+        assetRows.push({
+          id: assetId,
+          userId,
+          originalUrl,
+          previewUrl,
+          mime: "image/svg+xml",
+          width: Math.max(1, Math.round(object.width)),
+          height: Math.max(1, Math.round(object.height)),
+          createdAt: now,
+        });
+      }
       itemRows.push({
-        id: crypto.randomUUID(),
+        id: itemId,
         boardId: id,
-        type: "image",
+        type: object.type,
         assetId,
-        parentId: null,
+        parentId,
         x: object.x,
         y: object.y,
         width: object.width,
@@ -51,7 +57,7 @@ export async function importFigFile(userId: string, bytes: Uint8Array, filename:
         zIndex: index + 1,
         text: "",
         fontSize: 24,
-        color: "#1c1917",
+        color: object.type === "frame" ? object.color : "#1c1917",
         name: object.name,
       });
     }

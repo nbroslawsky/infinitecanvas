@@ -22,6 +22,7 @@ type DrawCtx = {
   depth: number;
   stack: Set<string>;
   shallow: boolean;
+  strokesOnly: boolean;
 };
 
 const IDENTITY: FigTransform = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
@@ -44,21 +45,26 @@ const CLIP_TYPES = new Set(["FRAME", "SECTION", "COMPONENT", "COMPONENT_SET", "I
 const VECTOR_TYPES = new Set(["VECTOR", "STAR", "POLYGON", "REGULAR_POLYGON", "BOOLEAN_OPERATION"]);
 
 export type RenderedNode = {
+  key: string;
+  parentKey: string | null;
+  type: "image" | "frame";
   name: string;
   x: number;
   y: number;
   width: number;
   height: number;
   svg: string;
+  color: string;
 };
 
 export function renderTopLevel(
   doc: FigDocument,
   node: FigNode,
-  options?: { transform?: FigTransform; shallow?: boolean },
+  options?: { transform?: FigTransform; shallow?: boolean; strokesOnly?: boolean },
 ): RenderedNode | null {
   const ctx = makeCtx(doc);
   ctx.shallow = Boolean(options?.shallow);
+  ctx.strokesOnly = Boolean(options?.strokesOnly);
   let body = "";
   try {
     body = renderLocal(node, ctx);
@@ -73,12 +79,16 @@ export function renderTopLevel(
   const defs = ctx.defs.length ? `<defs>${ctx.defs.join("")}</defs>` : "";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${num(placed.width)}" height="${num(placed.height)}" viewBox="0 0 ${num(placed.width)} ${num(placed.height)}" fill="none">${defs}<g${transform}>${body}</g></svg>`;
   return {
-    name: (node.name || "Frame").slice(0, 120),
+    key: nodeId(node) || crypto.randomUUID(),
+    parentKey: null,
+    type: "image",
+    name: (node.name || "Object").slice(0, 120),
     x: round3(placed.x),
     y: round3(placed.y),
     width: round3(placed.width),
     height: round3(placed.height),
     svg,
+    color: "",
   };
 }
 
@@ -92,6 +102,7 @@ function makeCtx(doc: FigDocument): DrawCtx {
     depth: 0,
     stack: new Set(),
     shallow: false,
+    strokesOnly: false,
   };
 }
 
@@ -183,7 +194,7 @@ function drawSelf(node: FigNode, ctx: DrawCtx, width?: number, height?: number):
   if (VECTOR_TYPES.has(node.type) && node.type !== "BOOLEAN_OPERATION") return drawGeometry(node, ctx, w, h, "both");
   const path = primitivePath(node, w, h);
   if (!path) return drawGeometry(node, ctx, w, h, "both");
-  const fills = drawFills(path, paintsOf(node), ctx, w, h);
+  const fills = ctx.strokesOnly ? "" : drawFills(path, paintsOf(node), ctx, w, h);
   const strokes = drawGeometry(node, ctx, w, h, "stroke") || drawPrimitiveStroke(node, path, ctx, w, h);
   return `${fills}${strokes}`;
 }

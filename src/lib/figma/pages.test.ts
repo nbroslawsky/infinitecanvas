@@ -61,6 +61,11 @@ describe("figma import", () => {
     expect(coverLogo?.svg).toContain("scale(0.417 0.417)");
     const logos = pages[2]?.objects ?? [];
     expect(logos.length).toBeGreaterThan(40);
-    expect(logos.find((object) => object.name === "Bank / Ansar / Color")).toMatchObject({ width: 48, height: 48 });
+    const multicolor = logos.find((object) => object.name === "Banks (Multicolor)");
+    const monocolor = logos.find((object) => object.name === "Bank (Monocolor)");
+    expect(multicolor).toMatchObject({ type: "frame", color: "#f5f5f5" });
+    expect(monocolor).toMatchObject({ type: "frame", color: "#616161" });
+    const ansar = logos.find((object) => object.name === "Bank / Ansar / Color");
+    expect(ansar).toMatchObject({ type: "image", width: 48, height: 48, parentKey: multicolor?.key });
   });
 });

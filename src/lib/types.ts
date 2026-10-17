@@ -41,6 +41,12 @@ export type BoardPayload = {
 
 export const FONT_SIZES = [16, 24, 40, 64] as const;
 export const TEXT_COLORS = ["#1c1917", "#9a3412", "#166534", "#1d4ed8", "#6b21a8"] as const;
+export const FRAME_COLORS = ["#ffffff", "#f5f5f4", "#e7e5e4", "#a8a29e", "#57534e", "#292524", "transparent"] as const;
+
+export function frameFill(color: string) {
+  if (!color || color === "#1c1917") return "#ffffff";
+  return color;
+}
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const PREVIEW_MAX_EDGE = 2048;
 export const EXPORT_PADDING = 48;

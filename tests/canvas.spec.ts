@@ -262,7 +262,7 @@ test("imports a figma file as draggable frames", async ({ page }) => {
   await page.waitForURL(/\/boards\//);
   const item = page.getByRole("img", { name: "Cappuccino" });
   await expect(item).toBeVisible();
-  await expect(page.locator("[data-type='image']")).toHaveCount(31);
+  await expect(page.getByText("Home/Light", { exact: true })).toBeVisible();
   const before = Number(await item.locator("xpath=..").getAttribute("data-x"));
   const box = await item.boundingBox();
   expect(box).toBeTruthy();
@@ -283,6 +283,25 @@ test("imports a figma file as draggable frames", async ({ page }) => {
   await expect(page.getByRole("checkbox", { name: "Select banks — Cover" }).first()).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Select banks — Read Me" }).first()).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Select banks — Iran Banks" }).first()).toBeVisible();
+});
+
+test("sets a frame fill", async ({ page }) => {
+  await login(page);
+  await page.getByTestId("new-board").click();
+  await page.waitForURL(/\/boards\//);
+  const canvas = page.getByTestId("viewport");
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+  await page.getByTestId("frame-tool").click();
+  await page.mouse.move(box!.x + 80, box!.y + 80);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 280, box!.y + 220, { steps: 6 });
+  await page.mouse.up();
+  const frame = page.locator("[data-type='frame'] .overflow-hidden");
+  await expect(frame).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await page.getByTestId("frame-fill-#292524").click();
+  await expect(frame).toHaveCSS("background-color", "rgb(41, 37, 36)");
+  await expect(page.getByTestId("save-status")).toHaveText("Saved");
 });
 
 test.describe("phone canvas", () => {

@@ -5,7 +5,7 @@ import { domToBlob } from "modern-screenshot";
 import fontkit from "@pdf-lib/fontkit";
 import { degrees, PDFDocument, rgb } from "pdf-lib";
 import { contentBounds, exportScale, pdfImageOrigin, worldBox, type LayoutItem } from "@/lib/layout";
-import type { AssetRecord, CanvasItem } from "@/lib/types";
+import { frameFill, type AssetRecord, type CanvasItem } from "@/lib/types";
 
 export type ExportResult = {
   blob: Blob;
@@ -68,7 +68,7 @@ async function renderPng(
     node.style.cssText = `position:absolute;left:${box.x - bounds.x}px;top:${box.y - bounds.y}px;width:${item.width}px;height:${item.height}px;transform:rotate(${item.type === "frame" ? 0 : item.rotation}deg);transform-origin:center center;box-sizing:border-box;`;
     if (item.type === "frame") {
       node.style.border = "1px solid #d6d3d1";
-      node.style.background = "rgba(255,255,255,0.72)";
+      node.style.background = frameFill(item.color);
       node.style.overflow = "hidden";
       const title = document.createElement("div");
       title.textContent = item.name || "Frame";
@@ -129,6 +129,7 @@ export async function exportBoardPdf(pages: Array<{ name: string; items: CanvasI
       const left = box.x - bounds.x;
       const top = box.y - bounds.y;
       if (item.type === "frame") {
+        const fill = frameFill(item.color);
         pdfPage.drawRectangle({
           x: left,
           y: bounds.height - top - item.height,
@@ -136,8 +137,8 @@ export async function exportBoardPdf(pages: Array<{ name: string; items: CanvasI
           height: item.height,
           borderWidth: 1,
           borderColor: rgb(0.84, 0.83, 0.82),
-          color: rgb(1, 1, 1),
-          opacity: 0.9,
+          color: fill === "transparent" ? rgb(1, 1, 1) : hexToRgb(fill),
+          opacity: fill === "transparent" ? 0 : 1,
         });
         pdfPage.drawText(item.name || "Frame", {
           x: left,
