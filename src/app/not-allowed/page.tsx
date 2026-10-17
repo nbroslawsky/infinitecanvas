@@ -8,6 +8,15 @@ export default function NotAllowedPage() {
       <a href="/sign-in" className="mt-6 text-sm underline">
         Back to sign in
       </a>
+      <p className="mt-8 text-sm text-stone-500">
+        <a className="underline" href="/privacy">
+          Privacy policy
+        </a>
+        <span> · </span>
+        <a className="underline" href="/terms">
+          Terms of service
+        </a>
+      </p>
     </main>
   );
 }

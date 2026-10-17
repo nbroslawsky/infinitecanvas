@@ -23,6 +23,16 @@ async function login(page: Page, email = "admin@test.dev") {
   await page.goto("/");
 }
 
+test("serves privacy and terms without signing in", async ({ page }) => {
+  const privacy = await page.goto("/privacy");
+  expect(privacy?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Privacy policy" })).toBeVisible();
+  expect(page.url()).not.toContain("/sign-in");
+  await page.getByRole("link", { name: "Terms of service" }).click();
+  await expect(page.getByRole("heading", { name: "Terms of service" })).toBeVisible();
+  expect(page.url()).toContain("/terms");
+});
+
 test("refuses someone who is not on the list", async ({ page }) => {
   await login(page, "stranger@test.dev");
   await expect(page.getByTestId("not-allowed")).toBeVisible();

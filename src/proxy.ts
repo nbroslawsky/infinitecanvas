@@ -7,6 +7,8 @@ export function proxy(request: NextRequest) {
     pathname.startsWith("/api") ||
     pathname.startsWith("/sign-in") ||
     pathname.startsWith("/not-allowed") ||
+    pathname.startsWith("/privacy") ||
+    pathname.startsWith("/terms") ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico"
   ) {

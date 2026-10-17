@@ -12,6 +12,15 @@ export default function SignInPage() {
       ) : (
         <p className="text-sm text-red-700">Set ADMIN_EMAILS before anyone can sign in.</p>
       )}
+      <p className="mt-8 text-sm text-stone-500">
+        <a className="underline" href="/privacy">
+          Privacy policy
+        </a>
+        <span> · </span>
+        <a className="underline" href="/terms">
+          Terms of service
+        </a>
+      </p>
     </main>
   );
 }
