@@ -17,7 +17,7 @@ type ViewerHandle = {
   getScrollTop: () => number;
 };
 
-type Tool = "select" | "frame" | "text";
+type Tool = "select" | "frame";
 
 const WORLD_OFFSET = 10000;
 const WORLD_SIZE = 20000;
@@ -32,7 +32,6 @@ export function InfiniteCanvas({
   const [boardName, setBoardName] = useState(initial.board.name);
   const [items, setItems] = useState<CanvasItem[]>(initial.items);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [editingFrameId, setEditingFrameId] = useState<string | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("select");
@@ -51,7 +50,7 @@ export function InfiniteCanvas({
   const lastSaved = useRef(items);
   const undoStack = useRef<CanvasItem[][]>([]);
   const redoStack = useRef<CanvasItem[][]>([]);
-  const clipboard = useRef<CanvasItem[]>([]);
+  const moveableRef = useRef<Moveable>(null);
   const saveTimer = useRef<number | null>(null);
   const running = useRef(false);
   const queued = useRef(false);
@@ -260,6 +259,7 @@ export function InfiniteCanvas({
   async function uploadFiles(files: File[], point?: { x: number; y: number }) {
     const origin = point ?? viewCenter();
     let offset = 0;
+    const added: string[] = [];
     for (const file of files) {
       const prepared = await prepareImage(file);
       if ("error" in prepared) {
@@ -287,9 +287,10 @@ export function InfiniteCanvas({
       };
       const next = applyReparent([...itemsRef.current, item], [item.id]);
       commit(next, true);
-      setSelectedIds([item.id]);
+      added.push(item.id);
       offset += size.width + 24;
     }
+    if (added.length > 0) setSelectedIds(added);
   }
 
   async function sendAsset(prepared: PreparedImage) {
@@ -343,30 +344,6 @@ export function InfiniteCanvas({
     };
   }
 
-  function addText(point: { x: number; y: number }) {
-    const item: CanvasItem = {
-      id: crypto.randomUUID(),
-      type: "text",
-      assetId: null,
-      parentId: null,
-      x: point.x,
-      y: point.y,
-      width: 200,
-      height: 48,
-      rotation: 0,
-      zIndex: maxZ(itemsRef.current) + 1,
-      text: "Text",
-      fontSize: 24,
-      color: "#1c1917",
-      name: "",
-    };
-    const next = applyReparent([...itemsRef.current, item], [item.id]);
-    commit(next, true);
-    setSelectedIds([item.id]);
-    setEditingTextId(item.id);
-    setTool("select");
-  }
-
   function addFrame(rect: { x: number; y: number; width: number; height: number }) {
     const count = itemsRef.current.filter((item) => item.type === "frame").length + 1;
     const item: CanvasItem = {
@@ -388,7 +365,6 @@ export function InfiniteCanvas({
     const next = applyReparent([...itemsRef.current, item], [item.id]);
     commit(next, true);
     setSelectedIds([item.id]);
-    setTool("select");
   }
 
   function deleteSelected() {
@@ -435,8 +411,11 @@ export function InfiniteCanvas({
       const meta = event.metaKey || event.ctrlKey;
       if (event.key === "Escape") {
         setSelectedIds([]);
-        setEditingFrameId(null);
         setEditingTextId(null);
+        setEditingNameId(null);
+        setTool("select");
+        draftStart.current = null;
+        setDraft(null);
       }
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
@@ -450,16 +429,6 @@ export function InfiniteCanvas({
         event.preventDefault();
         if (event.shiftKey) redo();
         else undo();
-      }
-      if (meta && event.key.toLowerCase() === "c") {
-        clipboard.current = itemsRef.current.filter((item) => selectedIds.includes(item.id));
-      }
-      if (meta && event.key.toLowerCase() === "v") {
-        event.preventDefault();
-        const copies = cloneItems(clipboard.current, clipboard.current.map((item) => item.id), 24);
-        if (copies.length === 0) return;
-        commit([...itemsRef.current, ...copies], true);
-        setSelectedIds(copies.map((item) => item.id));
       }
       if (meta && event.key === "0") {
         event.preventDefault();
@@ -478,13 +447,63 @@ export function InfiniteCanvas({
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code === "Space") setSpaceDown(false);
     };
+    const onCopy = (event: ClipboardEvent) => {
+      if (isTypingTarget(event.target) || selectedIds.length === 0 || !event.clipboardData) return;
+      event.preventDefault();
+      const payload = JSON.stringify(selectedIds);
+      event.clipboardData.setData(CANVAS_CLIPBOARD, payload);
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      if (isTypingTarget(event.target) || !event.clipboardData) return;
+      const ids = canvasIdsFromClipboard(event.clipboardData);
+      if (ids) {
+        event.preventDefault();
+        const copies = cloneItems(itemsRef.current, ids, 24);
+        if (copies.length === 0) return;
+        commit([...itemsRef.current, ...copies], true);
+        setSelectedIds(copies.map((item) => item.id));
+        return;
+      }
+      const files = imageFilesFromClipboard(event.clipboardData);
+      if (files.length === 0) return;
+      event.preventDefault();
+      void uploadFiles(files);
+    };
+    const allowFileDrop = (event: DragEvent) => {
+      if (!event.dataTransfer || !Array.from(event.dataTransfer.types).includes("Files") || !pointInShell(event.clientX, event.clientY)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    };
+    const onDrop = (event: DragEvent) => {
+      if (!pointInShell(event.clientX, event.clientY)) return;
+      event.preventDefault();
+      const files = [...(event.dataTransfer?.files ?? [])];
+      if (files.length === 0) return;
+      void uploadFiles(files, worldPoint(event.clientX, event.clientY));
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("copy", onCopy);
+    window.addEventListener("paste", onPaste);
+    window.addEventListener("dragenter", allowFileDrop, true);
+    window.addEventListener("dragover", allowFileDrop, true);
+    window.addEventListener("drop", onDrop, true);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("copy", onCopy);
+      window.removeEventListener("paste", onPaste);
+      window.removeEventListener("dragenter", allowFileDrop, true);
+      window.removeEventListener("dragover", allowFileDrop, true);
+      window.removeEventListener("drop", onDrop, true);
     };
   });
+
+  function pointInShell(clientX: number, clientY: number) {
+    const rect = shellRef.current?.getBoundingClientRect();
+    if (!rect) return false;
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+  }
 
   function nudgeBy(dx: number, dy: number) {
     if (selectedIds.length === 0) return;
@@ -542,22 +561,27 @@ export function InfiniteCanvas({
     if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
   }
 
-  function onItemPointerDown(event: React.PointerEvent, item: CanvasItem) {
+  function onItemPointerDown(event: React.PointerEvent<HTMLElement>, item: CanvasItem) {
     if (pan || tool === "frame") return;
-    if (item.parentId && editingFrameId !== item.parentId) {
-      event.stopPropagation();
-      if (selectedIds.length === 1 && selectedIds[0] === item.parentId) {
-        setEditingFrameId(item.parentId);
-        setSelectedIds([item.id]);
-      } else {
-        setEditingFrameId(null);
-        setSelectedIds([item.parentId]);
-      }
+    event.stopPropagation();
+    if (event.shiftKey) {
+      setSelectedIds((current) => (current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]));
       return;
     }
-    if (item.type === "frame" && selectedIds.length === 1 && selectedIds[0] === item.id && editingFrameId !== item.id) {
-      setEditingFrameId(item.id);
-    }
+    const element = event.currentTarget;
+    const moveable = moveableRef.current;
+    if (selectedIds.includes(item.id) || !moveable) return;
+    setSelectedIds([item.id]);
+    let holding = true;
+    const release = () => {
+      holding = false;
+    };
+    window.addEventListener("pointerup", release, { once: true });
+    window.addEventListener("pointercancel", release, { once: true });
+    void moveable.waitToChangeTarget().then(() => {
+      if (!holding) return;
+      moveable.dragStart(event.nativeEvent, element);
+    });
   }
 
   const selected = items.filter((item) => selectedIds.includes(item.id));
@@ -599,8 +623,7 @@ export function InfiniteCanvas({
         <div className="flex w-16 shrink-0 flex-col gap-1 border-r border-stone-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
           <button className={tool === "select" ? toolOn : iconButton} title="Select" onClick={() => setTool("select")}>Move</button>
           <button className={tool === "frame" ? toolOn : iconButton} title="Draw a frame" data-testid="frame-tool" onClick={() => setTool("frame")}>Frame</button>
-          <button className={tool === "text" ? toolOn : iconButton} title="Add text" data-testid="text-tool" onClick={() => setTool("text")}>Text</button>
-          <label className={iconButton} title="Add image">
+          <label className={`${iconButton} cursor-pointer`} title="Add image">
             Image
             <input
               data-testid="file-input"
@@ -632,28 +655,11 @@ export function InfiniteCanvas({
               backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px`,
               backgroundPosition: `${(WORLD_OFFSET - view.scrollLeft) * view.zoom}px ${(WORLD_OFFSET - view.scrollTop) * view.zoom}px`,
             }}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              const files = [...event.dataTransfer.files];
-              void uploadFiles(files, worldPoint(event.clientX, event.clientY));
-            }}
-            onPaste={(event) => {
-              const files = [...event.clipboardData.files];
-              if (files.length > 0) void uploadFiles(files);
-            }}
             onPointerDown={(event) => {
               const target = event.target as HTMLElement;
               if (target.closest("[data-item-id]") || target.closest(".moveable-control-box")) return;
-              if (tool === "text") {
-                addText(worldPoint(event.clientX, event.clientY));
-                return;
-              }
               if (tool !== "frame") {
-                if (!target.closest("[data-selectable='true']")) {
-                  setSelectedIds([]);
-                  setEditingFrameId(null);
-                }
+                setSelectedIds([]);
                 return;
               }
               const start = worldPoint(event.clientX, event.clientY);
@@ -693,7 +699,7 @@ export function InfiniteCanvas({
                     offset={WORLD_OFFSET}
                     item={item}
                     items={items}
-                    editingFrameId={editingFrameId}
+                    selectedIds={selectedIds}
                     editingTextId={editingTextId}
                     editingNameId={editingNameId}
                     onPointerDown={onItemPointerDown}
@@ -712,6 +718,7 @@ export function InfiniteCanvas({
               </div>
             </InfiniteViewer>
             <Moveable
+              ref={moveableRef}
               target={targets}
               draggable={!pan && tool === "select"}
               resizable={!pan && tool === "select"}
@@ -840,7 +847,7 @@ function ItemNode({
   item,
   items,
   offset = 0,
-  editingFrameId,
+  selectedIds,
   editingTextId,
   editingNameId,
   onPointerDown,
@@ -852,17 +859,17 @@ function ItemNode({
   item: CanvasItem;
   items: CanvasItem[];
   offset?: number;
-  editingFrameId: string | null;
+  selectedIds: string[];
   editingTextId: string | null;
   editingNameId: string | null;
-  onPointerDown: (event: React.PointerEvent, item: CanvasItem) => void;
+  onPointerDown: (event: React.PointerEvent<HTMLElement>, item: CanvasItem) => void;
   onEditText: (id: string | null) => void;
   onEditName: (id: string | null) => void;
   onText: (id: string, text: string, height: number) => void;
   onName: (id: string, name: string) => void;
 }) {
   const [broken, setBroken] = useState(false);
-  const selectable = item.parentId ? editingFrameId === item.parentId : true;
+  const selected = selectedIds.includes(item.id);
   const children = items.filter((child) => child.parentId === item.id).sort((a, b) => a.zIndex - b.zIndex);
   return (
     <div
@@ -872,7 +879,8 @@ function ItemNode({
       data-x={item.x}
       data-y={item.y}
       data-rotation={item.rotation}
-      data-selectable={selectable ? "true" : "false"}
+      data-selectable={item.parentId ? "false" : "true"}
+      data-selected={selected ? "true" : "false"}
       data-testid={`item-${item.id}`}
       className="absolute"
       style={{
@@ -883,6 +891,7 @@ function ItemNode({
         transform: item.type === "frame" ? undefined : `rotate(${item.rotation}deg)`,
         transformOrigin: "center center",
         zIndex: item.zIndex,
+        outline: selected && item.type !== "frame" ? "2px solid #2563eb" : undefined,
       }}
       onPointerDown={(event) => onPointerDown(event, item)}
       onDoubleClick={(event) => {
@@ -907,13 +916,13 @@ function ItemNode({
           ) : (
             <div className="absolute -top-6 left-0 truncate text-sm font-semibold text-stone-600">{item.name || "Frame"}</div>
           )}
-          <div className="h-full w-full overflow-hidden border border-stone-300 bg-white/70">
+          <div className={`h-full w-full overflow-hidden bg-white/70 ${selected ? "border-2 border-blue-600" : "border border-stone-300"}`}>
             {children.map((child) => (
               <ItemNode
                 key={child.id}
                 item={child}
                 items={items}
-                editingFrameId={editingFrameId}
+                selectedIds={selectedIds}
                 editingTextId={editingTextId}
                 editingNameId={editingNameId}
                 onPointerDown={onPointerDown}
@@ -1003,6 +1012,47 @@ function cloneItems(items: CanvasItem[], ids: string[], offset: number) {
     y: item.y + offset,
     zIndex: item.zIndex + 1,
   }));
+}
+
+const CANVAS_CLIPBOARD = "application/x-infinitecanvas";
+
+function isTypingTarget(target: EventTarget | null) {
+  const element = target as HTMLElement | null;
+  if (!element) return false;
+  return element.isContentEditable || element.tagName === "INPUT" || element.tagName === "TEXTAREA";
+}
+
+function canvasIdsFromClipboard(data: DataTransfer) {
+  let raw = "";
+  try {
+    raw = data.getData(CANVAS_CLIPBOARD);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const ids = JSON.parse(raw) as unknown;
+    if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) return ids;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function imageFilesFromClipboard(data: DataTransfer) {
+  const listed = [...data.files];
+  if (listed.length > 0) return listed.filter(isImageFile);
+  const files: File[] = [];
+  for (const item of data.items) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  return files;
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|heic|heif)$/i.test(file.name);
 }
 
 function safeName(name: string) {

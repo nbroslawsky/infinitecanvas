@@ -77,12 +77,8 @@ test.describe("desktop canvas", () => {
     const after = Number(await page.locator("[data-type='image']").getAttribute("data-x"));
     expect(after).not.toBe(before);
 
-    await page.getByTestId("text-tool").click();
     const canvas = page.getByTestId("viewport");
     const canvasBox = await canvas.boundingBox();
-    await canvas.click({ position: { x: canvasBox!.width / 2, y: canvasBox!.height / 2 } });
-    await expect(page.locator("[data-type='text']")).toBeVisible();
-
     await page.getByTestId("frame-tool").click();
     await page.mouse.move(canvasBox!.x + 80, canvasBox!.y + 80);
     await page.mouse.down();
@@ -90,11 +86,19 @@ test.describe("desktop canvas", () => {
     await page.mouse.up();
     const frame = page.locator("[data-type='frame']");
     await expect(frame).toBeVisible();
+    await expect(frame).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("frame-tool")).toHaveClass(/bg-stone-900/);
+
+    await page.getByRole("button", { name: "Move" }).click();
+    const empty = await canvas.boundingBox();
+    await page.mouse.click(empty!.x + empty!.width - 40, empty!.y + 40);
+    await expect(frame).toHaveAttribute("data-selected", "false");
     await frame.click();
-    await expect(frame).toHaveAttribute("data-item-id", /.+/);
+    await expect(frame).toHaveAttribute("data-selected", "true");
 
     const imageBox = await page.locator("[data-type='image']").boundingBox();
     await page.locator("[data-type='image']").click();
+    await expect(page.locator("[data-type='image']")).toHaveAttribute("data-selected", "true");
     const handle = page.locator(".moveable-rotation-control, .moveable-rotation");
     if (await handle.count()) {
       const handleBox = await handle.first().boundingBox();
@@ -136,6 +140,7 @@ test.describe("desktop canvas", () => {
     await page.mouse.move(box!.x + 360, box!.y + 300, { steps: 8 });
     await page.mouse.up();
     await expect(frame).toBeVisible();
+    await page.getByRole("button", { name: "Move" }).click();
     await page.getByTestId("file-input").setInputFiles({
       name: "dot.png",
       mimeType: "image/png",
@@ -176,10 +181,14 @@ test.describe("desktop canvas", () => {
       }, name);
       ids.push(id);
       await page.goto(`/boards/${id}`);
-      await page.getByTestId("text-tool").click();
+      await page.getByTestId("frame-tool").click();
       const canvas = page.getByTestId("viewport");
       const box = await canvas.boundingBox();
-      await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 } });
+      await page.mouse.move(box!.x + 80, box!.y + 80);
+      await page.mouse.down();
+      await page.mouse.move(box!.x + 280, box!.y + 220, { steps: 6 });
+      await page.mouse.up();
+      await expect(page.locator("[data-type='frame']")).toBeVisible();
       await expect(page.getByTestId("save-status")).toHaveText("Saved");
     }
     await page.goto("/");
