@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { unzipSync } from "fflate";
 import { PDFDocument } from "pdf-lib";
 import { readFileSync } from "node:fs";
 
@@ -87,7 +88,7 @@ test.describe("desktop canvas", () => {
     const frame = page.locator("[data-type='frame']");
     await expect(frame).toBeVisible();
     await expect(frame).toHaveAttribute("data-selected", "true");
-    await expect(page.getByTestId("frame-tool")).toHaveClass(/bg-stone-900/);
+    await expect(page.getByTestId("frame-tool")).toHaveClass(/bg-blue-600/);
 
     await page.getByRole("button", { name: "Move" }).click();
     const empty = await canvas.boundingBox();
@@ -111,12 +112,32 @@ test.describe("desktop canvas", () => {
       }
     }
 
+    await page.getByTestId("frame-tool").click();
+    const second = await page.getByTestId("viewport").boundingBox();
+    await page.mouse.move(second!.x + 340, second!.y + 90);
+    await page.mouse.down();
+    await page.mouse.move(second!.x + 520, second!.y + 230, { steps: 6 });
+    await page.mouse.up();
+    await expect(page.locator("[data-type='frame']")).toHaveCount(2);
+
     const downloadPromise = page.waitForEvent("download");
     await page.getByTestId("export-png").click();
     const download = await downloadPromise;
-    const png = readFileSync(await download.path());
-    expect(png.readUInt32BE(16)).toBeGreaterThan(32);
-    expect(png.readUInt32BE(20)).toBeGreaterThan(32);
+    expect(download.suggestedFilename()).toMatch(/\.zip$/);
+    const zipped = unzipSync(new Uint8Array(readFileSync(await download.path())));
+    const pngs = Object.values(zipped);
+    expect(pngs).toHaveLength(2);
+    for (const png of pngs) {
+      const buffer = Buffer.from(png);
+      expect(buffer.readUInt32BE(16)).toBeGreaterThan(32);
+      expect(buffer.readUInt32BE(20)).toBeGreaterThan(32);
+    }
+
+    const pdfPromise = page.waitForEvent("download");
+    await page.getByTestId("export-pdf").click();
+    const pdfDownload = await pdfPromise;
+    const pdf = await PDFDocument.load(readFileSync(await pdfDownload.path()));
+    expect(pdf.getPageCount()).toBe(2);
 
     const zoomCanvas = await page.getByTestId("viewport").boundingBox();
     await page.mouse.move(zoomCanvas!.x + zoomCanvas!.width / 2, zoomCanvas!.y + zoomCanvas!.height / 2);
@@ -124,6 +145,38 @@ test.describe("desktop canvas", () => {
     await page.mouse.wheel(0, -200);
     await page.keyboard.up("Control");
     await expect(page.getByTestId("zoom-label")).not.toHaveText("100%");
+  });
+
+  test("keeps resize handles on the frame while scrolling", async ({ page }) => {
+    await login(page);
+    await page.getByTestId("new-board").click();
+    await page.waitForURL(/\/boards\//);
+    const canvas = page.getByTestId("viewport");
+    const box = await canvas.boundingBox();
+    expect(box).toBeTruthy();
+    await page.getByTestId("frame-tool").click();
+    await page.mouse.move(box!.x + 180, box!.y + 140);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + 520, box!.y + 400, { steps: 6 });
+    await page.mouse.up();
+    await page.getByRole("button", { name: "Move" }).click();
+    const frame = page.locator("[data-type='frame']");
+    await expect(frame).toHaveAttribute("data-selected", "true");
+    const before = await frame.boundingBox();
+    expect(before).toBeTruthy();
+    await page.mouse.move(box!.x + 30, box!.y + 30);
+    await page.mouse.wheel(0, 280);
+    await expect.poll(async () => (await frame.boundingBox())?.y).not.toBe(before!.y);
+    const frameBox = await frame.boundingBox();
+    const handleBox = await page.locator(".moveable-control").first().boundingBox();
+    expect(frameBox && handleBox).toBeTruthy();
+    const nearX = [frameBox!.x, frameBox!.x + frameBox!.width / 2, frameBox!.x + frameBox!.width].some(
+      (edge) => Math.abs(handleBox!.x + handleBox!.width / 2 - edge) < 28,
+    );
+    const nearY = [frameBox!.y, frameBox!.y + frameBox!.height / 2, frameBox!.y + frameBox!.height].some(
+      (edge) => Math.abs(handleBox!.y + handleBox!.height / 2 - edge) < 28,
+    );
+    expect(nearX && nearY).toBe(true);
   });
 
   test("drops an image into a frame", async ({ page }) => {

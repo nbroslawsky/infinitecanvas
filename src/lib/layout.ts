@@ -196,6 +196,12 @@ export function contentBounds(items: LayoutItem[], padding = EXPORT_PADDING): Aa
   };
 }
 
+export function dotGridStep(zoom: number, base = 24, targetScreen = 22): number {
+  const safeZoom = Math.max(zoom, 0.05);
+  const power = Math.max(0, Math.round(Math.log2(targetScreen / safeZoom / base)));
+  return base * 2 ** power;
+}
+
 export function exportScale(width: number, height: number, desired = 2, maxEdge = EXPORT_MAX_EDGE): number {
   if (width <= 0 || height <= 0) return desired;
   const edge = Math.max(width, height) * desired;

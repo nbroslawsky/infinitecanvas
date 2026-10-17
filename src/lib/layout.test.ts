@@ -3,6 +3,7 @@ import {
   alignItems,
   contentBounds,
   distributeItems,
+  dotGridStep,
   exportScale,
   pdfImageOrigin,
   pdfPageSize,
@@ -24,6 +25,17 @@ function item(partial: Partial<LayoutItem> & Pick<LayoutItem, "id">): LayoutItem
     ...partial,
   };
 }
+
+describe("dotGridStep", () => {
+  it("keeps the base grid at a normal zoom", () => {
+    expect(dotGridStep(1)).toBe(24);
+  });
+
+  it("drops to a coarser lattice as the view zooms out", () => {
+    expect(dotGridStep(0.2)).toBe(96);
+    expect(dotGridStep(0.05)).toBeGreaterThan(96);
+  });
+});
 
 describe("rotatedAabb", () => {
   it("matches the box when rotation is zero", () => {

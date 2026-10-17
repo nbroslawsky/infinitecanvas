@@ -57,7 +57,7 @@ async function renderPng(
   const width = Math.max(1, Math.round(bounds.width * scale));
   const height = Math.max(1, Math.round(bounds.height * scale));
   const root = document.createElement("div");
-  root.style.cssText = `position:fixed;left:-20000px;top:0;width:${width}px;height:${height}px;background:#f4f1ea;overflow:hidden;`;
+  root.style.cssText = `position:fixed;left:-20000px;top:0;width:${width}px;height:${height}px;background:#f4f4f5;overflow:hidden;`;
   const world = document.createElement("div");
   world.style.cssText = `position:absolute;left:0;top:0;width:${bounds.width}px;height:${bounds.height}px;transform:scale(${scale});transform-origin:0 0;`;
   const layout = asLayout(items);

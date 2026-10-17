@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import InfiniteViewer from "react-infinite-viewer";
 import Moveable from "react-moveable";
 import Selecto from "react-selecto";
-import { alignItems, contentBounds, distributeItems, reparent, type AlignKind } from "@/lib/layout";
+import { alignItems, contentBounds, distributeItems, dotGridStep, reparent, type AlignKind } from "@/lib/layout";
 import { FONT_SIZES, TEXT_COLORS, type BoardPayload, type CanvasItem } from "@/lib/types";
-import { downloadBlob, exportBoardPdf, exportBoardPng } from "@/components/canvas/export-board";
+import { downloadBlob, exportBoardPdf, exportBoardPng, exportBoardsZip } from "@/components/canvas/export-board";
 import { prepareImage, type PreparedImage } from "@/components/canvas/prepare-image";
 
 type ViewerHandle = {
@@ -542,9 +542,20 @@ export function InfiniteCanvas({
 
   async function runExport(kind: "png" | "pdf" | "selection") {
     setNote("");
-    const chosen = kind === "selection" ? items.filter((item) => selectedIds.includes(item.id)) : items;
+    if (kind === "selection") {
+      const chosen = items.filter((item) => selectedIds.includes(item.id));
+      const result = await exportBoardPng(chosen);
+      if ("error" in result) {
+        setNote(result.error);
+        return;
+      }
+      downloadBlob(result.blob, `${safeName(boardName)}-selection.png`);
+      if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
+      return;
+    }
+    const pages = framePages(itemsRef.current, boardName);
     if (kind === "pdf") {
-      const result = await exportBoardPdf([{ name: boardName, items: chosen }]);
+      const result = await exportBoardPdf(pages);
       if ("error" in result) {
         setNote(result.error);
         return;
@@ -552,12 +563,22 @@ export function InfiniteCanvas({
       downloadBlob(result.blob, `${safeName(boardName)}.pdf`);
       return;
     }
-    const result = await exportBoardPng(chosen);
+    if (pages.length === 1) {
+      const result = await exportBoardPng(pages[0].items);
+      if ("error" in result) {
+        setNote(result.error);
+        return;
+      }
+      downloadBlob(result.blob, `${safeName(pages[0].name)}.png`);
+      if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
+      return;
+    }
+    const result = await exportBoardsZip(pages);
     if ("error" in result) {
       setNote(result.error);
       return;
     }
-    downloadBlob(result.blob, `${safeName(boardName)}.png`);
+    downloadBlob(result.blob, `${safeName(boardName)}.zip`);
     if (result.capped) setNote(`Exported at ${result.scale.toFixed(2)}x, capped`);
   }
 
@@ -595,36 +616,44 @@ export function InfiniteCanvas({
   }, [items, selectedIds, targets]);
 
   const roots = items.filter((item) => !item.parentId).sort((a, b) => a.zIndex - b.zIndex);
+  const gridStep = dotGridStep(view.zoom);
+  const gridSize = gridStep * view.zoom;
+  const gridOriginX = (WORLD_OFFSET - view.scrollLeft) * view.zoom - gridSize / 2;
+  const gridOriginY = (WORLD_OFFSET - view.scrollTop) * view.zoom - gridSize / 2;
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] flex-col bg-[#f7f6f3] text-stone-900">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-stone-200 bg-white px-3">
-        <a href="/" className="grid h-11 min-w-11 place-items-center rounded-md px-2 text-sm hover:bg-stone-100" title="Boards">
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col bg-zinc-100 text-zinc-900">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-zinc-200 bg-white px-3">
+        <a href="/" className="grid h-10 min-w-10 place-items-center rounded-lg px-2 text-sm text-zinc-700 hover:bg-zinc-100" title="Boards">
           Boards
         </a>
         <input
           aria-label="Board name"
-          className="h-11 min-w-0 flex-1 rounded-md border border-transparent px-2 text-base font-medium outline-none hover:border-stone-200 focus:border-stone-400"
+          className="h-10 min-w-0 flex-1 rounded-lg border border-transparent px-2 text-base font-medium outline-none hover:border-zinc-200 focus:border-blue-500"
           value={boardName}
           onChange={(event) => setBoardName(event.target.value)}
           onBlur={(event) => void renameBoard(event.target.value.trim() || "Untitled")}
         />
-        <span className="text-sm text-stone-500" data-testid="zoom-label">{zoomLabel}%</span>
+        <span className="text-sm tabular-nums text-zinc-500" data-testid="zoom-label">{zoomLabel}%</span>
         <button className={iconButton} title="Zoom out" onClick={() => viewerRef.current?.setZoom(Math.max(0.05, (viewerRef.current?.getZoom() || 1) / 1.2))}>−</button>
         <button className={iconButton} title="Zoom in" onClick={() => viewerRef.current?.setZoom(Math.min(8, (viewerRef.current?.getZoom() || 1) * 1.2))}>+</button>
         <button className={iconButton} title="Fit (⌘0)" onClick={fit}>Fit</button>
         <button className={iconButton} title="100% (⌘1)" onClick={() => viewerRef.current?.setZoom(1)}>100%</button>
-        <button className={iconButton} title="Export PNG" data-testid="export-png" onClick={() => void runExport("png")}>PNG</button>
-        <button className={iconButton} title="Export PDF" data-testid="export-pdf" onClick={() => void runExport("pdf")}>PDF</button>
+        <button className={iconButton} title="Download each frame as a PNG" data-testid="export-png" onClick={() => void runExport("png")}>PNG</button>
+        <button className={iconButton} title="Download each frame as a PDF page" data-testid="export-pdf" onClick={() => void runExport("pdf")}>PDF</button>
         <button className={iconButton} title="Export selection" onClick={() => void runExport("selection")}>Selection</button>
-        <span className="min-w-16 text-right text-xs text-stone-500" data-testid="save-status">{status}</span>
+        <span className="min-w-16 text-right text-xs text-zinc-500" data-testid="save-status">{status}</span>
       </header>
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-16 shrink-0 flex-col gap-1 border-r border-stone-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-          <button className={tool === "select" ? toolOn : iconButton} title="Select" onClick={() => setTool("select")}>Move</button>
-          <button className={tool === "frame" ? toolOn : iconButton} title="Draw a frame" data-testid="frame-tool" onClick={() => setTool("frame")}>Frame</button>
-          <label className={`${iconButton} cursor-pointer`} title="Add image">
-            Image
+        <div className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-zinc-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          <button className={tool === "select" ? toolOn : iconButton} aria-label="Move" title="Move" onClick={() => setTool("select")}>
+            <MoveIcon />
+          </button>
+          <button className={tool === "frame" ? toolOn : iconButton} aria-label="Frame" title="Frame" data-testid="frame-tool" onClick={() => setTool("frame")}>
+            <FrameIcon />
+          </button>
+          <label className={`${iconButton} cursor-pointer`} aria-label="Add image" title="Add image">
+            <ImageIcon />
             <input
               data-testid="file-input"
               className="sr-only"
@@ -639,8 +668,8 @@ export function InfiniteCanvas({
             />
           </label>
           {coarse ? (
-            <button className={panTool ? toolOn : iconButton} title="Pan with one finger" onClick={() => setPanTool((value) => !value)}>
-              Pan
+            <button className={panTool ? toolOn : iconButton} aria-label="Pan" title="Pan with one finger" onClick={() => setPanTool((value) => !value)}>
+              <PanIcon />
             </button>
           ) : null}
         </div>
@@ -650,10 +679,10 @@ export function InfiniteCanvas({
             data-testid="viewport"
             className="canvas-shell relative min-h-0 flex-1 touch-none overflow-hidden"
             style={{
-              backgroundColor: "#f4f1ea",
-              backgroundImage: "radial-gradient(circle, #bdb7ad 1.2px, transparent 1.2px)",
-              backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px`,
-              backgroundPosition: `${(WORLD_OFFSET - view.scrollLeft) * view.zoom}px ${(WORLD_OFFSET - view.scrollTop) * view.zoom}px`,
+              backgroundColor: "#f4f4f5",
+              backgroundImage: "radial-gradient(circle, #c4c4cc 1.4px, transparent 1.4px)",
+              backgroundSize: `${gridSize}px ${gridSize}px`,
+              backgroundPosition: `${gridOriginX}px ${gridOriginY}px`,
             }}
             onPointerDown={(event) => {
               const target = event.target as HTMLElement;
@@ -690,7 +719,11 @@ export function InfiniteCanvas({
               zoomRange={[0.05, 8]}
               displayHorizontalScroll={false}
               displayVerticalScroll={false}
-              onScroll={(event) => saveCamera(event.scrollLeft, event.scrollTop, event.zoomX)}
+              onScroll={(event) => {
+                saveCamera(event.scrollLeft, event.scrollTop, event.zoomX);
+                moveableRef.current?.updateRect();
+                requestAnimationFrame(() => moveableRef.current?.updateRect());
+              }}
             >
               <div className="relative" data-testid="canvas" style={{ width: WORLD_SIZE, height: WORLD_SIZE }}>
                 {roots.map((item) => (
@@ -791,7 +824,7 @@ export function InfiniteCanvas({
             />
           </div>
           {selected.length >= 2 ? (
-            <div className="flex flex-wrap gap-1 border-t border-stone-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+            <div className="flex flex-wrap gap-1 border-t border-zinc-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
               {(["left", "center", "right", "top", "middle", "bottom"] as AlignKind[]).map((kind) => (
                 <button key={kind} className={iconButton} title={`Align ${kind}`} onClick={() => commit(alignItems(itemsRef.current, selectedIds, kind))}>
                   {kind}
@@ -806,7 +839,7 @@ export function InfiniteCanvas({
             </div>
           ) : null}
           {single ? (
-            <div className="flex flex-wrap items-center gap-1 border-t border-stone-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+            <div className="flex flex-wrap items-center gap-1 border-t border-zinc-200 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
               <button className={iconButton} title="Bring forward" onClick={() => updateSelected((item) => ({ ...item, zIndex: maxZ(itemsRef.current.filter((entry) => entry.parentId === item.parentId)) + 1 }))}>Front</button>
               <button className={iconButton} title="Send backward" onClick={() => updateSelected((item) => ({ ...item, zIndex: minZ(itemsRef.current.filter((entry) => entry.parentId === item.parentId)) - 1 }))}>Back</button>
               <button className={iconButton} title="Duplicate (⌘D)" onClick={duplicateSelected}>Duplicate</button>
@@ -822,13 +855,13 @@ export function InfiniteCanvas({
                     </button>
                   ))}
                   {TEXT_COLORS.map((color) => (
-                    <button key={color} title={color} className="h-11 w-11 rounded-md border border-stone-200" style={{ background: color }} onClick={() => updateSelected((item) => ({ ...item, color }))} />
+                    <button key={color} title={color} className="h-10 w-10 rounded-lg border border-zinc-200" style={{ background: color }} onClick={() => updateSelected((item) => ({ ...item, color }))} />
                   ))}
                 </>
               ) : null}
             </div>
           ) : null}
-          {note ? <p className="border-t border-stone-200 bg-white px-3 py-2 text-sm text-stone-600" data-testid="export-note">{note}</p> : null}
+          {note ? <p className="border-t border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600" data-testid="export-note">{note}</p> : null}
         </div>
       </div>
     </div>
@@ -914,9 +947,9 @@ function ItemNode({
               }}
             />
           ) : (
-            <div className="absolute -top-6 left-0 truncate text-sm font-semibold text-stone-600">{item.name || "Frame"}</div>
+            <div className="absolute -top-6 left-0 truncate text-sm font-semibold text-zinc-500">{item.name || "Frame"}</div>
           )}
-          <div className={`h-full w-full overflow-hidden bg-white/70 ${selected ? "border-2 border-blue-600" : "border border-stone-300"}`}>
+          <div className={`h-full w-full overflow-hidden bg-white shadow-sm ${selected ? "border-2 border-blue-600" : "border border-zinc-200"}`}>
             {children.map((child) => (
               <ItemNode
                 key={child.id}
@@ -1059,5 +1092,55 @@ function safeName(name: string) {
   return name.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-|-$/g, "") || "board";
 }
 
-const iconButton = "grid h-11 min-w-11 place-items-center rounded-md px-2 text-sm hover:bg-stone-100";
-const toolOn = "grid h-11 min-w-11 place-items-center rounded-md bg-stone-900 px-2 text-sm text-white";
+function framePages(items: CanvasItem[], fallbackName: string) {
+  const frames = items
+    .filter((item) => item.type === "frame" && !item.parentId)
+    .sort((a, b) => a.x - b.x || a.y - b.y);
+  if (frames.length === 0) return [{ name: fallbackName, items }];
+  return frames.map((frame, index) => {
+    const ids = new Set(collectIds(items, [frame.id]));
+    return {
+      name: frame.name.trim() || `Frame ${index + 1}`,
+      items: items.filter((item) => ids.has(item.id)),
+    };
+  });
+}
+
+function MoveIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 3.5 10.8 20l2.1-6.1L19.5 12 4.5 3.5z" />
+    </svg>
+  );
+}
+
+function FrameIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+    </svg>
+  );
+}
+
+function ImageIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <circle cx="8.5" cy="10" r="1.25" fill="currentColor" stroke="none" />
+      <path d="m20.5 15.5-4.2-4.2-8.3 7.2" />
+    </svg>
+  );
+}
+
+function PanIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 11V6.5a1.5 1.5 0 0 1 3 0V11" />
+      <path d="M11 10.5V5.5a1.5 1.5 0 0 1 3 0V11" />
+      <path d="M14 11V7.5a1.5 1.5 0 0 1 3 0V14c0 3.5-2 6.5-6 6.5-3.2 0-5.2-2-6.2-4.2L3.5 13a1.4 1.4 0 0 1 2.4-1.5L8 14" />
+    </svg>
+  );
+}
+
+const iconButton = "grid h-10 min-w-10 place-items-center rounded-lg px-2 text-sm text-zinc-600 hover:bg-zinc-100";
+const toolOn = "grid h-10 min-w-10 place-items-center rounded-lg bg-blue-600 px-2 text-sm text-white";
