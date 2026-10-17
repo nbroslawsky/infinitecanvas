@@ -14,11 +14,16 @@ export async function POST(request: Request) {
   if (!(file instanceof File)) return jsonError("Choose a .fig file", 400);
   if (!/\.(fig|deck|jam)$/i.test(file.name)) return jsonError("Choose a .fig file", 400);
   if (file.size > MAX_FIG_BYTES) return jsonError("Figma files need to be under 48 MB", 400);
+  if (process.env.VERCEL && file.size > 4.5 * 1024 * 1024) {
+    return jsonError("That Figma file is over 4.5 MB. The hosted site can't receive an upload that large.", 400);
+  }
   try {
     const boards = await importFigFile(viewer.session.user.id, new Uint8Array(await file.arrayBuffer()), file.name);
     return NextResponse.json({ boards });
   } catch (error) {
+    console.error("Figma import failed", error);
     const message = error instanceof Error ? error.message : "Could not read that Figma file";
-    return jsonError(message.startsWith("That ") ? message : "Could not read that Figma file", 400);
+    const safe = message.replace(/postgres(?:ql)?:\/\/\S+/gi, "[database]").slice(0, 240);
+    return jsonError(safe || "Could not read that Figma file", 400);
   }
 }

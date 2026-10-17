@@ -46,10 +46,24 @@ function canvases(doc: FigDocument) {
   return ordered(children.filter((node) => node.type === "CANVAS" && node.internalOnly !== true && node.phase !== "REMOVED"));
 }
 
+function childNodes(doc: FigDocument, id: string) {
+  const seen = new Set<string>();
+  const kids: FigNode[] = [];
+  for (const child of doc.childrenMap.get(id) || []) {
+    const childId = nodeId(child);
+    if (!childId || seen.has(childId)) continue;
+    seen.add(childId);
+    const latest = doc.nodeMap.get(childId) || child;
+    if (latest.phase === "REMOVED" || latest.visible === false) continue;
+    kids.push(latest);
+  }
+  return ordered(kids);
+}
+
 function objectsOn(doc: FigDocument, sheet: FigNode) {
-  const children = doc.childrenMap.get(nodeId(sheet) || "") || [];
+  const children = childNodes(doc, nodeId(sheet) || "");
   const objects: RenderedNode[] = [];
-  for (const child of ordered(children)) {
+  for (const child of children) {
     if (child.type === "CANVAS" || child.type === "DOCUMENT" || child.visible === false || child.phase === "REMOVED") continue;
     flatten(doc, child, IDENTITY, null, objects);
   }
@@ -75,13 +89,13 @@ function flatten(doc: FigDocument, node: FigNode, parentWorld: FigTransform, par
         });
         const stroke = renderTopLevel(doc, node, { transform: world, shallow: true, strokesOnly: true });
         if (stroke?.svg) objects.push({ ...stroke, key: `${key}:stroke`, parentKey: key, name: node.name || "Stroke" });
-        for (const child of ordered(doc.childrenMap.get(key) || [])) flatten(doc, child, world, key, objects);
+        for (const child of childNodes(doc, key)) flatten(doc, child, world, key, objects);
         return;
       }
     }
     const background = renderTopLevel(doc, node, { transform: world, shallow: true });
     if (background) objects.push({ ...background, key, parentKey });
-    for (const child of ordered(doc.childrenMap.get(key) || [])) flatten(doc, child, world, parentKey, objects);
+    for (const child of childNodes(doc, key)) flatten(doc, child, world, parentKey, objects);
     return;
   }
   const rendered = renderTopLevel(doc, node, { transform: world });
@@ -140,10 +154,7 @@ function collect(doc: FigDocument, node: FigNode, acc: FigNode[], stack: Set<str
   const id = nodeId(node) || "";
   if (stack.has(id)) return;
   stack.add(id);
-  for (const child of doc.childrenMap.get(id) || []) {
-    if (child.phase === "REMOVED" || child.visible === false) continue;
-    collect(doc, child, acc, stack);
-  }
+  for (const child of childNodes(doc, id)) collect(doc, child, acc, stack);
 }
 
 function isArtworkPiece(node: FigNode) {
